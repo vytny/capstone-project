@@ -186,9 +186,17 @@ class PayloadContextScorer:
 
         # Padding attack: try stripped variant first
         if cls._detect_padding_attack(raw_bytes):
-            stripped = raw_bytes.strip(b" \t\n\r\x00")
-            if stripped:
+            # Try smart stripping (removes most frequent repetitive char)
+            stripped = cls._smart_strip_padding(raw_bytes)
+            if stripped and stripped != raw_bytes:
                 normalized = cls._normalize_payload(stripped)
+                if cls._scan_for_patterns(normalized) == config.CONTEXT_MALICIOUS:
+                    return config.CONTEXT_MALICIOUS
+            
+            # Also try traditional whitespace stripping
+            stripped_ws = raw_bytes.strip(b" \t\n\r\x00")
+            if stripped_ws and stripped_ws != raw_bytes:
+                normalized = cls._normalize_payload(stripped_ws)
                 if cls._scan_for_patterns(normalized) == config.CONTEXT_MALICIOUS:
                     return config.CONTEXT_MALICIOUS
 
@@ -222,20 +230,75 @@ class PayloadContextScorer:
 
     @classmethod
     def _detect_padding_attack(cls, raw_bytes: bytes) -> bool:
+        """Detect padding attacks using ANY repetitive character.
+        
+        Strategy:
+        1. Check for traditional whitespace padding
+        2. Check for low character diversity (repetitive chars)
+        3. Check if most frequent char dominates the payload
+        """
         if len(raw_bytes) < cls.MIN_PAYLOAD_FOR_RATIO:
             return False
 
+        # Check 1: Traditional whitespace padding
         padding_chars = {ord(" "), ord("\t"), ord("\n"), ord("\r"), 0, 11, 12}
         padding_count = sum(1 for b in raw_bytes if b in padding_chars)
         ratio = padding_count / len(raw_bytes)
         if ratio > cls.PADDING_RATIO_THRESHOLD:
             return True
 
+        # Check 2: Low diversity (very few unique chars)
         sample = raw_bytes[:100]
         if len(set(sample)) <= 3:
             return True
+        
+        # Check 3: Single character dominance (e.g., lots of '+' or 'a')
+        # Count frequency of most common byte
+        from collections import Counter
+        byte_counts = Counter(raw_bytes)
+        if byte_counts:
+            most_common_byte, count = byte_counts.most_common(1)[0]
+            dominance_ratio = count / len(raw_bytes)
+            # If any single byte appears in >70% of payload, likely padding
+            if dominance_ratio > 0.70:
+                return True
 
         return False
+
+    @classmethod
+    def _smart_strip_padding(cls, raw_bytes: bytes) -> bytes:
+        """Smart stripping that removes repetitive padding chars.
+        
+        This handles padding attacks using ANY character ('+', 'a', etc.),
+        not just whitespace.
+        
+        Strategy:
+        1. Find the most frequent byte in the payload
+        2. If it dominates (>60%), strip it from edges
+        3. Return the core content
+        """
+        if len(raw_bytes) < 100:
+            return raw_bytes
+        
+        # Count byte frequencies
+        from collections import Counter
+        byte_counts = Counter(raw_bytes)
+        
+        if not byte_counts:
+            return raw_bytes
+        
+        # Find most common byte
+        most_common_byte, count = byte_counts.most_common(1)[0]
+        dominance_ratio = count / len(raw_bytes)
+        
+        # If this byte dominates (>60%), it's likely padding
+        if dominance_ratio > 0.60:
+            # Strip this byte from both ends
+            padding_char = bytes([most_common_byte])
+            stripped = raw_bytes.strip(padding_char)
+            return stripped
+        
+        return raw_bytes
 
     @classmethod
     def _collapse_whitespace(cls, text: str) -> str:

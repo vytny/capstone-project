@@ -228,3 +228,23 @@ class FlowState:
     @property
     def protocol(self) -> int:
         return self.flow_key[4]
+
+    @property
+    def duration(self) -> float:
+        """
+        Tính duration của flow từ packet đầu tiên đến packet cuối cùng.
+        
+        Returns:
+            float: Duration in seconds, 0.0 if flow is empty
+    """
+        all_packets = self.get_all_packets()
+    
+        if not all_packets:
+            return 0.0
+    
+        timestamps = [p.timestamp for p in all_packets if p.timestamp]
+    
+        if not timestamps or len(timestamps) < 2:
+            return 0.0
+        
+        return max(timestamps) - min(timestamps)

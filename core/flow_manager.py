@@ -79,11 +79,16 @@ class FlowManager:
         """
         Xử lý 1 packet: Map vào flow và xác định direction.
         
-        LOGIC:
-        1. Tạo flow_key từ packet
-        2. Nếu flow_key tồn tại → FORWARD packet
-        3. Nếu reverse_key tồn tại → BACKWARD packet
-        4. Nếu cả 2 không tồn tại → Tạo flow mới (FORWARD)
+        LOGIC (theo CICFlowMeter):
+        1. Packet đầu tiên tạo flow và set src/dst
+        2. Packets sau: So sánh packet.src_ip với flow.src_ip
+           - Nếu packet.src_ip == flow.src_ip → FORWARD
+           - Nếu packet.src_ip == flow.dst_ip → BACKWARD
+        
+        CÁCH HOẠT ĐỘNG:
+        - Tìm flow bằng flow_key hoặc reverse_key
+        - Sau đó check packet.src_ip để xác định direction
+        - Đơn giản và chính xác như CICFlowMeter
         """
         if not layer_info.has_ip:
             return None
@@ -94,17 +99,19 @@ class FlowManager:
         flow = None
         is_forward = True
         
-        # Case 1: Forward packet (flow_key tồn tại)
+        # BƯỚC 1: Tìm flow (check cả 2 chiều)
         if flow_key in self.flows:
             flow = self.flows[flow_key]
-            is_forward = True
+            # CHECK theo CICFlowMeter: packet.src == flow.src?
+            is_forward = (layer_info.src_ip == flow.src_ip)
         
         # Case 2: Backward packet (reverse_key tồn tại)
         elif reverse_key in self.flows:
             flow = self.flows[reverse_key]
-            is_forward = False
+            # CHECK theo CICFlowMeter: packet.src == flow.src?
+            is_forward = (layer_info.src_ip == flow.src_ip)
         
-        # Case 3: New flow
+        # Case 3: New flow (packet đầu tiên LÀ FORWARD)
         else:
             flow = FlowState(flow_key, self.window_size)
             self.flows[flow_key] = flow
